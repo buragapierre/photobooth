@@ -1,0 +1,12 @@
+.screen video.is-hidden { display: none; }
+.file-input { display: none; }
+.upload {
+  display: block;
+  margin: 12px auto 0;
+  border: 0;
+  background: transparent;
+  color: #bc6873;
+  text-decoration: underline;
+  font: 700 11px Nunito, sans-serif;
+  cursor: pointer;
+}

@@ -1,0 +1,18 @@
+.shots {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.shots img,
+.shots .empty {
+  width: 100%;
+  min-width: 0;
+  height: 96px;
+  min-height: 0;
+  display: block;
+  object-fit: cover;
+  overflow: hidden;
+}
+
+.shots .empty {
+  display: grid;
+}

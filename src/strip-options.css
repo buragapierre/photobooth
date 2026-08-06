@@ -1,0 +1,15 @@
+.strip-head { border-top: 1px dashed #e9b7a5; padding-top: 16px; }
+.strip-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin: 12px 0 16px; }
+.strip-options button { min-width: 0; border: 1.5px solid #e5b29d; border-radius: 9px; background: #fffdf6; padding: 6px; color: #8e6962; font: 700 10px Nunito, sans-serif; cursor: pointer; }
+.strip-options button.selected { border-color: #dc6879; background: #ffe3d7; box-shadow: 2px 3px 0 #e39a91; color: #b0445b; }
+.strip-options img { display: block; width: 39px; height: 74px; margin: 0 auto 4px; object-fit: cover; object-position: top; border-radius: 3px; }
+.strip-preview-wrap { border-top: 1px dashed #e9b7a5; margin: 2px 0 16px; padding-top: 12px; }
+.strip-preview-wrap p { margin: 0 0 8px; color: #9d7068; font: 10px DM Mono, monospace; text-align: center; }
+.strip-preview { position: relative; display: block; width: 96px; height: 272px; margin: 0 auto; padding: 0; overflow: hidden; border: 0; background-position: center; background-repeat: no-repeat; background-size: 100% 100%; box-shadow: 2px 3px 0 #e1a89d; cursor: zoom-in; }
+.strip-preview img { position: absolute; display: block; object-fit: cover; }
+.strip-preview img.frame-overlay { inset: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; object-fit: fill; }
+.preview-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(77 44 51 / 72%); }
+.preview-dialog { position: relative; width: min(420px, 90vw); max-height: 92vh; overflow: auto; padding: 22px; border: 3px solid #71414a; border-radius: 18px; background: #fff8e9; box-shadow: 8px 9px 0 #e86d7d; text-align: center; }
+.preview-dialog p { margin: 0 0 13px; color: #8b5b56; font: 700 18px Fraunces, serif; }
+.strip-preview.expanded { width: min(300px, 70vw); height: min(849px, 70vh); cursor: default; box-shadow: 4px 5px 0 #e1a89d; }
+.close-preview { position: absolute; top: 8px; right: 10px; width: 29px; height: 29px; border: 0; border-radius: 50%; background: #e56778; color: white; font-size: 23px; line-height: 1; cursor: pointer; }
