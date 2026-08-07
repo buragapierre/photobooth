@@ -18,6 +18,7 @@ const strips = [
 export default function App() {
   const videoRef = useRef(null)
   const streamRef = useRef(null)
+  const cameraRequestRef = useRef(0)
   const fileRef = useRef(null)
   const [filter, setFilter] = useState(filters[0])
   const [photos, setPhotos] = useState([])
@@ -28,7 +29,10 @@ export default function App() {
   const [overlaySrc, setOverlaySrc] = useState('')
   const [previewExpanded, setPreviewExpanded] = useState(false)
 
-  useEffect(() => () => streamRef.current?.getTracks().forEach(t => t.stop()), [])
+  useEffect(() => () => {
+    cameraRequestRef.current += 1
+    streamRef.current?.getTracks().forEach(track => track.stop())
+  }, [])
 
   useEffect(() => {
     let isCurrent = true
@@ -39,24 +43,44 @@ export default function App() {
   }, [selectedStrip])
 
   async function startCamera() {
+    const requestId = ++cameraRequestRef.current
+    const isRestarting = cameraOn
     try {
       setError('')
+      if (isRestarting) {
+        setPhotos([])
+        setCount(null)
+        setPreviewExpanded(false)
+      }
       streamRef.current?.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+      if (videoRef.current) {
+        videoRef.current.pause()
+        videoRef.current.srcObject = null
+      }
+      setCameraOn(false)
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('unsupported')
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false })
+
+      // Ignore a delayed stream from an earlier restart click.
+      if (requestId !== cameraRequestRef.current) {
+        stream.getTracks().forEach(track => track.stop())
+        return
+      }
+
       streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        await videoRef.current.play().catch(() => {})
+      }
       setCameraOn(true)
     } catch {
-      setError('Camera access was not available. You can still enjoy the booth view!')
+      if (requestId === cameraRequestRef.current) {
+        setCameraOn(false)
+        setError('Camera access was not available. You can still enjoy the booth view!')
+      }
     }
   }
-
-  useEffect(() => {
-    if (cameraOn && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current
-      videoRef.current.play().catch(() => {})
-    }
-  }, [cameraOn])
 
   function addPhoto(src) {
     setPhotos(current => [...current, { src, filter: filter.name }].slice(-3))
@@ -167,22 +191,22 @@ export default function App() {
             {overlaySrc && <img className="frame-overlay" src={overlaySrc} alt="" />}
           </button>
         </div>
-        {previewExpanded && <div className="preview-backdrop" onClick={() => setPreviewExpanded(false)}>
-          <div className="preview-dialog" onClick={event => event.stopPropagation()}>
-            <button className="close-preview" onClick={() => setPreviewExpanded(false)} aria-label="Close preview">×</button>
-            <p>your live strip</p>
-            <div className="strip-preview expanded" style={{ backgroundImage: `url(${selectedStrip.src})` }}>
-              {selectedStrip.slots.map((slot, index) => photos[index] && <img key={index} src={photos[index].src} alt={`Preview snapshot ${index + 1}`} style={{ left: `${slot.x / 707 * 100}%`, top: `${slot.y / 2000 * 100}%`, width: `${slot.width / 707 * 100}%`, height: `${slot.height / 2000 * 100}%` }} />)}
-              {overlaySrc && <img className="frame-overlay" src={overlaySrc} alt="" />}
-            </div>
-          </div>
-        </div>}
         <button className="print" onClick={downloadStrip} disabled={!photos.length}>↓　download photo strip</button>
         <input ref={fileRef} className="file-input" type="file" accept="image/*" onChange={uploadPhoto} />
         <button className="upload" onClick={() => fileRef.current?.click()}>+ add a photo instead</button>
         {error && <p className="error">{error}</p>}
       </aside>
     </section>
+    {previewExpanded && <div className="preview-backdrop" onClick={() => setPreviewExpanded(false)}>
+      <div className="preview-dialog" role="dialog" aria-modal="true" aria-label="Live strip preview" onClick={event => event.stopPropagation()}>
+        <button className="close-preview" onClick={() => setPreviewExpanded(false)} aria-label="Close preview">&times;</button>
+        <p>your live strip</p>
+        <div className="strip-preview expanded" style={{ backgroundImage: `url(${selectedStrip.src})` }}>
+          {selectedStrip.slots.map((slot, index) => photos[index] && <img key={index} src={photos[index].src} alt={`Preview snapshot ${index + 1}`} style={{ left: `${slot.x / 707 * 100}%`, top: `${slot.y / 2000 * 100}%`, width: `${slot.width / 707 * 100}%`, height: `${slot.height / 2000 * 100}%` }} />)}
+          {overlaySrc && <img className="frame-overlay" src={overlaySrc} alt="" />}
+        </div>
+      </div>
+    </div>}
     <footer>made for soft smiles & sunny days <span>✦</span></footer>
   </main>
 }

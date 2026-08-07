@@ -11,5 +11,46 @@
 .preview-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(77 44 51 / 72%); }
 .preview-dialog { position: relative; width: min(420px, 90vw); max-height: 92vh; overflow: auto; padding: 22px; border: 3px solid #71414a; border-radius: 18px; background: #fff8e9; box-shadow: 8px 9px 0 #e86d7d; text-align: center; }
 .preview-dialog p { margin: 0 0 13px; color: #8b5b56; font: 700 18px Fraunces, serif; }
-.strip-preview.expanded { width: min(300px, 70vw); height: min(849px, 70vh); cursor: default; box-shadow: 4px 5px 0 #e1a89d; }
+.strip-preview.expanded { width: min(300px, 70vw); height: auto; aspect-ratio: 707 / 2000; cursor: default; box-shadow: 4px 5px 0 #e1a89d; }
 .close-preview { position: absolute; top: 8px; right: 10px; width: 29px; height: 29px; border: 0; border-radius: 50%; background: #e56778; color: white; font-size: 23px; line-height: 1; cursor: pointer; }
+
+@media (max-width: 900px) {
+  main { padding-inline: clamp(20px, 5vw, 44px); }
+  .booth-wrap { grid-template-columns: minmax(0, 680px); justify-content: center; gap: 32px; }
+  .panel { width: 100%; max-width: 680px; justify-self: center; }
+}
+
+@media (max-width: 480px) {
+  main { padding: 18px 16px 24px; }
+  .sparkles { font-size: 13px; letter-spacing: 5px; }
+  header { margin: 8px auto 22px; }
+  .logo { width: 36px; height: 36px; font-size: 21px; }
+  .brand { gap: 8px; font-size: 12px; }
+  .brand b { font-size: 22px; }
+  .booth-wrap { gap: 26px; }
+  .booth { padding: 8px; border-width: 3px; border-radius: 20px; box-shadow: 6px 7px 0 #bd6b69, 0 0 0 5px #f7b6aa; }
+  .top { height: 44px; padding: 0 11px; font-size: 9px; letter-spacing: .5px; }
+  .lights { gap: 4px; }
+  .lights i { width: 8px; height: 8px; }
+  .screen { margin: 10px 2%; border-width: 6px; }
+  .placeholder span { font-size: 56px; }
+  .placeholder strong { font-size: 23px; }
+  .placeholder small { font-size: 9px; text-align: center; }
+  .screen-sticker { right: 8px; bottom: 8px; padding: 4px 6px; font-size: 8px; }
+  .countdown { font-size: 92px; }
+  .controls { gap: 10px; flex-wrap: wrap; padding: 3px 0 2px; }
+  .controls span { flex-basis: 100%; order: 3; text-align: center; font-size: 10px; }
+  .camera { width: 48px; height: 48px; font-size: 31px; }
+  .power { padding: 8px; }
+  .panel { padding: 17px; border-radius: 16px; box-shadow: 5px 6px 0 #e4aa9d; }
+  .panel h2 { font-size: 18px; }
+  .filters { margin: 12px 0 18px; gap: 7px; }
+  .filters button { padding: 8px 5px; font-size: 11px; }
+  .shots { gap: 7px; }
+  .shots img, .shots .empty { height: clamp(72px, 25vw, 96px); }
+  .strip-options { gap: 7px; }
+  .preview-backdrop { padding: 12px; }
+  .preview-dialog { width: 100%; max-height: calc(100dvh - 24px); padding: 18px 14px; border-radius: 15px; }
+  .preview-dialog p { margin-bottom: 10px; font-size: 17px; }
+  .strip-preview.expanded { width: min(270px, 72vw); }
+}
