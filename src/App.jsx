@@ -798,11 +798,6 @@ export default function App() {
           <button className="result-share" onClick={shareStrip} type="button">⤴ share / save to photos</button>
           <button className="result-open" onClick={() => window.open(savedStrip.url, '_blank', 'noopener')} type="button">open full image</button>
         </div>
-        <small className="result-hint">On iPad / iPhone: tap <b>Share</b> → Save to Photos, or touch-hold the image → Save to Photos.</small>
-        {moments.some(moment => moment.clip) && <div className="motion-row">
-          <p>this strip in motion</p>
-          <div className="motion-clips">{moments.map((moment, index) => moment.clip && <div key={moment.id} className="motion-clip"><video src={moment.clip.url} playsInline preload="metadata" muted /><a href={moment.clip.url} download={`sweet-memories-clip-${index + 1}.${moment.clip.extension}`} aria-label={`Download video for photo ${index + 1}`}>↓ clip {index + 1}</a></div>)}</div>
-        </div>}
       </div>
     </div>}
     {videoStrip && <div className="preview-backdrop" onClick={closeVideoStrip}>
@@ -815,7 +810,6 @@ export default function App() {
           <button className="result-share" onClick={shareVideoStrip} type="button">⤴ share / save video</button>
           <button className="result-open" onClick={() => window.open(videoStrip.url, '_blank', 'noopener')} type="button">open full video</button>
         </div>
-        <small className="result-hint">Every clip ends on its photo pose. On iPad: <b>Share</b> → Save Video.</small>
       </div>
     </div>}
     {activeMoment?.photo && <div className="preview-backdrop" onClick={closeActiveMoment}>
