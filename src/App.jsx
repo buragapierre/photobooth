@@ -27,18 +27,20 @@ export default function App() {
   const streamRef = useRef(null)
   const cameraRequestRef = useRef(0)
   const fileRef = useRef(null)
-  const recorderRef = useRef(null)
-  const chunksRef = useRef([])
-  const timerRef = useRef(null)
-  const autoClipRef = useRef(false)
+  // Staggered recorder pool on one shared mirrored tap: every shutter grabs
+  // the oldest recorder, so each photo gets up to 15s of lookback even when
+  // captures come back-to-back.
+  const POOL_SIZE = 2
+  const STAGGER_MS = 7000
+  const poolRef = useRef([])
+  const mirrorTapRef = useRef(null)
   const mirrorRafRef = useRef(null)
-  const mirrorStreamRef = useRef(null)
   const mirrorCanvasRef = useRef(null)
-  const recordingRef = useRef(false)
+  const staggerTimerRef = useRef(null)
   const countdownActiveRef = useRef(false)
-  const autoRestartRef = useRef(false)
-  const discardClipRef = useRef(false)
   const [filter, setFilter] = useState(filters[0])
+  const filterRef = useRef(filter)
+  filterRef.current = filter
   // Each shot pairs a photo with the video ending at its capture moment,
   // so a photo can always find its corresponding video by id.
   const [moments, setMoments] = useState([])
@@ -59,22 +61,14 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false)
   const [videoStrip, setVideoStrip] = useState(null)
   const [isSavingVideo, setIsSavingVideo] = useState(false)
-  const [isRecording, setIsRecording] = useState(false)
-  const [recSeconds, setRecSeconds] = useState(0)
-  const [recordedVideo, setRecordedVideo] = useState(null)
 
   useEffect(() => () => {
     cameraRequestRef.current += 1
-    autoRestartRef.current = false
     countdownActiveRef.current = false
-    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-      discardClipRef.current = true
-    }
-    try { recorderRef.current?.state !== 'inactive' && recorderRef.current?.stop() } catch {}
-    clearInterval(timerRef.current)
-    stopMirrorPipeline()
+    clearTimeout(staggerTimerRef.current)
+    poolStopAll()
+    stopMirrorTap()
     streamRef.current?.getTracks().forEach(track => track.stop())
-    if (recordedVideo?.blob) URL.revokeObjectURL(recordedVideo.url)
     setMoments(current => {
       current.forEach(moment => { try { moment.clip && URL.revokeObjectURL(moment.clip.url) } catch {} })
       return current
@@ -90,12 +84,11 @@ export default function App() {
   }, [selectedStrip])
 
   useEffect(() => {
-    if (!previewExpanded && !savedStrip && !recordedVideo && !videoStrip && !activeMoment) return
+    if (!previewExpanded && !savedStrip && !videoStrip && !activeMoment) return
     const onKey = (event) => {
       if (event.key === 'Escape') {
         setPreviewExpanded(false)
         if (event.key === 'Escape' && savedStrip) closeSavedStrip()
-        if (event.key === 'Escape' && recordedVideo) closeRecordedVideo()
         if (event.key === 'Escape' && videoStrip) closeVideoStrip()
         if (event.key === 'Escape' && activeMoment) closeActiveMoment()
       }
@@ -107,7 +100,7 @@ export default function App() {
       document.removeEventListener('keydown', onKey)
       document.body.style.overflow = previousOverflow
     }
-  }, [previewExpanded, savedStrip, recordedVideo, videoStrip, activeMoment])
+  }, [previewExpanded, savedStrip, videoStrip, activeMoment])
 
   async function startCamera() {
     const requestId = ++cameraRequestRef.current
@@ -115,20 +108,11 @@ export default function App() {
     const isRestarting = cameraOn
     try {
       setError('')
-      autoRestartRef.current = false
       countdownActiveRef.current = false
       pendingMomentRef.current = null
-      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-        discardClipRef.current = true
-      }
-      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-        try { recorderRef.current.stop() } catch {}
-      }
-      clearInterval(timerRef.current)
-      stopMirrorPipeline()
-      recordingRef.current = false
-      setIsRecording(false)
-      setRecSeconds(0)
+      clearTimeout(staggerTimerRef.current)
+      poolStopAll()
+      stopMirrorTap()
       if (isRestarting) {
         setMoments(current => {
           current.forEach(moment => { try { moment.clip && URL.revokeObjectURL(moment.clip.url) } catch {} })
@@ -162,9 +146,23 @@ export default function App() {
         await videoRef.current.play().catch(() => {})
       }
       setCameraOn(true)
-      // Stall behavior: rolling 15s auto-record starts the moment the
-      // camera is live, so the moments before every capture are covered.
-      setTimeout(() => { try { startRecording(true) } catch {} }, 400)
+      // Stall behavior: one shared mirrored tap starts the moment the camera
+      // is live, with two staggered recorders on it, so the moments before
+      // every capture are covered.
+      setTimeout(() => {
+        try {
+          if (requestId !== cameraRequestRef.current || !streamRef.current) return
+          if (!ensureMirrorTap()) return
+          poolFill()
+          clearTimeout(staggerTimerRef.current)
+          staggerTimerRef.current = setTimeout(() => {
+            try {
+              if (requestId !== cameraRequestRef.current || !streamRef.current) return
+              poolFill()
+            } catch {}
+          }, STAGGER_MS)
+        } catch {}
+      }, 400)
     } catch {
       if (requestId === cameraRequestRef.current) {
         setCameraOn(false)
@@ -175,10 +173,9 @@ export default function App() {
 
   function addPhotoMoment(src) {
     const id = ++momentIdRef.current
-    // A rolling recording is active: its endpoint will be this shutter, so
-    // the finished clip belongs to this moment. Uploads while recording
-    // steal nothing — the capture below re-points the pending marker.
-    const expectsClip = recordingRef.current
+    // A pooled recorder is running: the oldest one's endpoint will be this
+    // shutter, so its finished clip belongs to this moment.
+    const expectsClip = poolRef.current.length > 0
     if (expectsClip) pendingMomentRef.current = id
     setMoments(current => {
       if (current.length >= 3) {
@@ -223,190 +220,186 @@ export default function App() {
     return candidates.find(type => { try { return MediaRecorder.isTypeSupported(type) } catch { return false } }) || ''
   }
 
-  function formatRecTime(totalSeconds) {
-    const minutes = Math.floor(totalSeconds / 60)
-    const seconds = totalSeconds % 60
-    return `${String(minutes).padStart(1, '0')}:${String(seconds).padStart(2, '0')}`
+  // One mirrored tap feeds every pooled recorder, so N encoders share a
+  // single canvas loop instead of each running their own.
+  function ensureMirrorTap() {
+    if (mirrorTapRef.current || !streamRef.current) return !!mirrorTapRef.current
+    try {
+      const liveVideo = videoRef.current
+      const trackSettings = streamRef.current.getVideoTracks?.()[0]?.getSettings?.() || {}
+      const tapWidth = liveVideo?.videoWidth || trackSettings.width || 1280
+      const tapHeight = liveVideo?.videoHeight || trackSettings.height || 720
+      if (!liveVideo || !tapWidth || !tapHeight) return false
+      const mirrorCanvas = document.createElement('canvas')
+      mirrorCanvas.width = tapWidth
+      mirrorCanvas.height = tapHeight
+      mirrorCanvasRef.current = mirrorCanvas
+      const mirrorCtx = mirrorCanvas.getContext('2d')
+      const drawMirrored = () => {
+        try {
+          // Live mood, mirrored like the photo shutter.
+          mirrorCtx.filter = filterRef.current.value
+          mirrorCtx.save()
+          mirrorCtx.translate(tapWidth, 0)
+          mirrorCtx.scale(-1, 1)
+          mirrorCtx.drawImage(liveVideo, 0, 0, tapWidth, tapHeight)
+          mirrorCtx.restore()
+        } catch {}
+        mirrorRafRef.current = requestAnimationFrame(drawMirrored)
+      }
+      drawMirrored()
+      let tapStream = null
+      if (mirrorCanvas.captureStream) {
+        tapStream = mirrorCanvas.captureStream(30)
+      }
+      mirrorTapRef.current = { canvas: mirrorCanvas, ctx: mirrorCtx, stream: tapStream }
+      return true
+    } catch {
+      stopMirrorTap()
+      return false
+    }
   }
 
-  function stopMirrorPipeline() {
+  function resumeMirrorLoop() {
+    const tap = mirrorTapRef.current
+    if (!tap || mirrorRafRef.current || !streamRef.current) return
+    const liveVideo = videoRef.current
+    if (!liveVideo) return
+    const tapWidth = tap.canvas.width, tapHeight = tap.canvas.height
+    const drawMirrored = () => {
+      try {
+        tap.ctx.filter = filterRef.current.value
+        tap.ctx.save()
+        tap.ctx.translate(tapWidth, 0)
+        tap.ctx.scale(-1, 1)
+        tap.ctx.drawImage(liveVideo, 0, 0, tapWidth, tapHeight)
+        tap.ctx.restore()
+      } catch {}
+      mirrorRafRef.current = requestAnimationFrame(drawMirrored)
+    }
+    drawMirrored()
+  }
+
+  function stopMirrorTap() {
     if (mirrorRafRef.current) cancelAnimationFrame(mirrorRafRef.current)
     mirrorRafRef.current = null
     mirrorCanvasRef.current = null
-    mirrorStreamRef.current?.getTracks().forEach(track => { try { track.stop() } catch {} })
-    mirrorStreamRef.current = null
+    const tap = mirrorTapRef.current
+    tap?.stream?.getTracks().forEach(track => { try { track.stop() } catch {} })
+    mirrorTapRef.current = null
   }
 
-  // Freeze the mirrored feed on its current frame so the recorder's tail
-  // holds the capture pose instead of the relaxed moment right after it.
+  // Freeze the mirrored feed on its current frame so every pooled
+  // recorder's tail holds the capture pose instead of the relaxed moment
+  // right after it.
   function freezeMirrorFrame() {
     if (mirrorRafRef.current) cancelAnimationFrame(mirrorRafRef.current)
     mirrorRafRef.current = null
   }
 
-  function startRecording(auto = false) {
-    if (recordingRef.current || !streamRef.current) return false
-    if (typeof MediaRecorder === 'undefined') {
-      if (!auto) setError('Video recording is not supported on this browser, but photos still work!')
-      return false
-    }
-    const session = recordSessionRef.current
-    try {
-      if (!auto) setError('')
-      chunksRef.current = []
-      autoClipRef.current = auto
-      discardClipRef.current = false
-      // Mirror the live feed into a canvas (like the photo shutter does),
-      // so the recorded file matches the mirrored preview — not the raw sensor.
-      const liveVideo = videoRef.current
-      const trackSettings = streamRef.current.getVideoTracks?.()[0]?.getSettings?.() || {}
-      const mirrorWidth = liveVideo?.videoWidth || trackSettings.width || 1280
-      const mirrorHeight = liveVideo?.videoHeight || trackSettings.height || 720
-      const mood = filter.value
-      let recordStream = streamRef.current
-      if (liveVideo && mirrorWidth && mirrorHeight) {
-        try {
-          const mirrorCanvas = document.createElement('canvas')
-          mirrorCanvas.width = mirrorWidth
-          mirrorCanvas.height = mirrorHeight
-          mirrorCanvasRef.current = mirrorCanvas
-          const mirrorCtx = mirrorCanvas.getContext('2d')
-          const drawMirrored = () => {
-            try {
-              mirrorCtx.filter = mood
-              mirrorCtx.save()
-              mirrorCtx.translate(mirrorWidth, 0)
-              mirrorCtx.scale(-1, 1)
-              mirrorCtx.drawImage(liveVideo, 0, 0, mirrorWidth, mirrorHeight)
-              mirrorCtx.restore()
-            } catch {}
-            mirrorRafRef.current = requestAnimationFrame(drawMirrored)
-          }
-          drawMirrored()
-          if (mirrorCanvas.captureStream) {
-            recordStream = mirrorCanvas.captureStream(30)
-            mirrorStreamRef.current = recordStream
-          } else {
-            stopMirrorPipeline()
-          }
-        } catch {
-          stopMirrorPipeline()
+  function poolFill() {
+    if (typeof MediaRecorder === 'undefined' || !streamRef.current) return
+    const tapStream = mirrorTapRef.current?.stream
+    const recordStream = tapStream || streamRef.current
+    while (poolRef.current.length < POOL_SIZE) {
+      try {
+        const mimeType = pickVideoMime()
+        const recorder = mimeType ? new MediaRecorder(recordStream, { mimeType }) : new MediaRecorder(recordStream)
+        const entry = {
+          recorder,
+          chunks: [],
+          mimeType,
+          session: recordSessionRef.current,
+          startedAt: Date.now(),
+          capTimer: null,
+          discard: false,
         }
-      }
-      const mimeType = pickVideoMime()
-      const recorder = mimeType ? new MediaRecorder(recordStream, { mimeType }) : new MediaRecorder(recordStream)
-      recorderRef.current = recorder
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) chunksRef.current.push(event.data)
-      }
-      recorder.onstop = () => {
-        clearInterval(timerRef.current)
-        stopMirrorPipeline()
-        recordingRef.current = false
-        setIsRecording(false)
-        const wasAuto = autoClipRef.current
-        autoClipRef.current = false
-        // Rolling windows with no capture are temporary — only the clip
-        // ending at the shutter gets saved to the frames.
-        const discard = discardClipRef.current
-        discardClipRef.current = false
-        const shouldRestart = autoRestartRef.current
-        autoRestartRef.current = false
-        const staleSession = session !== recordSessionRef.current
-        const type = recorder.mimeType || mimeType || 'video/mp4'
-        const blob = new Blob(chunksRef.current, { type })
-        if (!blob.size) {
-          if (!wasAuto) setError('Recording was too short. Please try again.')
-        } else if (!wasAuto) {
-          const extension = type.includes('mp4') ? 'mp4' : 'webm'
-          const url = URL.createObjectURL(blob)
-          if (recordedVideo?.blob) URL.revokeObjectURL(recordedVideo.url)
-          setRecordedVideo({ url, blob, extension, mime: type })
-        } else if (!staleSession && !discard) {
-          const id = pendingMomentRef.current
-          pendingMomentRef.current = null
-          if (id != null) {
-            const extension = type.includes('mp4') ? 'mp4' : 'webm'
-            const url = URL.createObjectURL(blob)
-            setMoments(current => current.map(moment => moment.id === id ? { ...moment, clip: { url, blob, extension, mime: type }, clipPending: false } : moment))
-          }
-        } else {
-          // Discarded window, stale session, or orphaned clip: never saved.
-          // Just clear any pending marker so no tile waits forever.
-          const id = pendingMomentRef.current
-          pendingMomentRef.current = null
-          if (id != null) {
-            setMoments(current => current.map(moment => moment.id === id ? { ...moment, clipPending: false } : moment))
-          }
+        recorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) entry.chunks.push(event.data)
         }
-        // Rolling window: keep a fresh 15s recording going so the next
-        // capture also has the moments before it.
-        if (wasAuto && shouldRestart && !staleSession && streamRef.current) {
-          setTimeout(() => { try { startRecording(true) } catch {} }, 300)
-        }
-        setRecSeconds(0)
+        recorder.onstop = () => poolOnStop(entry)
+        entry.capTimer = setTimeout(() => poolExpire(entry), MAX_REC_SECONDS * 1000)
+        recorder.start(250)
+        poolRef.current.push(entry)
+      } catch {
+        break
       }
-      recorder.start(250)
-      recordingRef.current = true
-      setIsRecording(true)
-      setRecSeconds(0)
-      clearInterval(timerRef.current)
-      timerRef.current = setInterval(() => {
-        setRecSeconds((seconds) => {
-          if (seconds + 1 >= MAX_REC_SECONDS) {
-            // Don't cut the clip mid-pose: if the 3s photo countdown is
-            // running, let the shutter stop the recording at capture instead.
-            if (countdownActiveRef.current) return seconds + 1
-            // No capture happened in this window — discard it and roll on.
-            discardClipRef.current = true
-            autoRestartRef.current = true
-            stopRecording()
-          }
-          return seconds + 1
-        })
-      }, 1000)
-      return true
-    } catch {
-      stopMirrorPipeline()
-      if (!auto) setError('Could not start recording. Please try again.')
-      autoClipRef.current = false
-      return false
     }
   }
 
-  function stopRecording() {
-    clearInterval(timerRef.current)
-    const recorder = recorderRef.current
-    if (recorder && recorder.state !== 'inactive') {
-      try { recorder.stop() } catch {}
+  function poolExpire(entry) {
+    if (!poolRef.current.includes(entry)) return
+    // Don't cut the clip mid-pose: if the 3s photo countdown is running,
+    // give it a little more rope — the shutter ends this window instead.
+    if (countdownActiveRef.current) {
+      clearTimeout(entry.capTimer)
+      entry.capTimer = setTimeout(() => poolExpire(entry), 2000)
+      return
+    }
+    // No capture claimed this window — its footage is temporary.
+    poolStopEntry(entry, true)
+    poolFill()
+  }
+
+  function poolStopEntry(entry, discard) {
+    const index = poolRef.current.indexOf(entry)
+    if (index !== -1) poolRef.current.splice(index, 1)
+    clearTimeout(entry.capTimer)
+    entry.discard = discard
+    try {
+      if (entry.recorder.state !== 'inactive') entry.recorder.stop()
+      else poolDiscardEntry(entry)
+    } catch {
+      poolDiscardEntry(entry)
+    }
+  }
+
+  function poolDiscardEntry(entry) {
+    clearTimeout(entry.capTimer)
+  }
+
+  function poolStopAll() {
+    const entries = poolRef.current.splice(0, poolRef.current.length)
+    entries.forEach(entry => {
+      clearTimeout(entry.capTimer)
+      // Tear-down stops are never saved.
+      entry.discard = true
+      entry.session = -1
+      try { if (entry.recorder.state !== 'inactive') entry.recorder.stop() } catch {}
+    })
+  }
+
+  function poolOnStop(entry) {
+    clearTimeout(entry.capTimer)
+    const staleSession = entry.session !== recordSessionRef.current
+    const type = entry.recorder.mimeType || entry.mimeType || 'video/mp4'
+    const blob = new Blob(entry.chunks, { type })
+    if (!staleSession && !entry.discard && blob.size) {
+      const id = pendingMomentRef.current
+      pendingMomentRef.current = null
+      if (id != null) {
+        const extension = type.includes('mp4') ? 'mp4' : 'webm'
+        const url = URL.createObjectURL(blob)
+        setMoments(current => current.map(moment => moment.id === id ? { ...moment, clip: { url, blob, extension, mime: type }, clipPending: false } : moment))
+      }
     } else {
-      stopMirrorPipeline()
-      recordingRef.current = false
-      setIsRecording(false)
+      // Discarded window, stale session, or orphaned clip: never saved.
+      // Just clear any pending marker so no tile waits forever.
+      const id = pendingMomentRef.current
+      pendingMomentRef.current = null
+      if (id != null) {
+        setMoments(current => current.map(moment => moment.id === id ? { ...moment, clipPending: false } : moment))
+      }
     }
   }
 
-  function closeRecordedVideo() {
-    if (recordedVideo?.blob) URL.revokeObjectURL(recordedVideo.url)
-    setRecordedVideo(null)
-  }
-
-  async function shareVideo() {
-    if (!recordedVideo) return
-    try {
-      const file = new File([recordedVideo.blob], `photobooth-clip.${recordedVideo.extension}`, { type: recordedVideo.mime })
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file], title: "babi's photobooth clip" })
-        return
-      }
-      if (navigator.share) {
-        await navigator.share({ title: "babi's photobooth clip", url: recordedVideo.url })
-        return
-      }
-      window.open(recordedVideo.url, '_blank', 'noopener')
-    } catch {
-      // User dismissed the share sheet — not an error.
-    }
+  function poolClaimOldest() {
+    if (!poolRef.current.length) return null
+    let oldest = poolRef.current[0]
+    poolRef.current.forEach(entry => {
+      if (entry.startedAt < oldest.startedAt) oldest = entry
+    })
+    return oldest
   }
 
   async function shareClip(clip) {
@@ -436,13 +429,9 @@ export default function App() {
     }
 
     setError('')
-    // Stall behavior: a rolling 15s recording already covers the prep.
-    // The 3s countdown runs, and the shutter stops the video at the exact
-    // capture moment — so the photo matches the last video pose.
+    // Stall behavior: the staggered pool already covers the prep — the
+    // oldest recorder ends up holding up to 15s of lookback.
     countdownActiveRef.current = true
-    if (!recordingRef.current) {
-      startRecording(true)
-    }
     setCount(3)
     const countdown = (number) => {
       if (number > 0) {
@@ -455,16 +444,21 @@ export default function App() {
           }
           setCount(number - 1 || null)
           if (number === 1) {
-            // Freeze first: the recorder holds this exact pose as its tail,
-            // and the photo below is lifted from the same frozen frame.
+            // Freeze first: every pooled recorder holds this exact pose as
+            // its tail, and the photo below is lifted from the same frame.
             freezeMirrorFrame()
             captureFrame(video)
             countdownActiveRef.current = false
-            if (recordingRef.current) {
-              // Fresh rolling window for the next capture.
-              autoRestartRef.current = true
-              stopRecording()
+            // The oldest pooled recorder becomes this photo's video, ending
+            // exactly at the shutter. Refill so the next capture has cover.
+            const claimed = poolClaimOldest()
+            if (claimed) {
+              poolStopEntry(claimed, false)
+              poolFill()
             }
+            // Let the remaining recorders see live frames again once the
+            // claimed clip has finalized on the frozen pose.
+            setTimeout(() => resumeMirrorLoop(), 600)
           } else {
             countdown(number - 1)
           }
@@ -478,7 +472,7 @@ export default function App() {
     const canvas = document.createElement('canvas')
     // Prefer the exact mirrored frame being recorded: the photo then IS a
     // video frame, so still and clip can never disagree on the pose.
-    const mirror = recordingRef.current ? mirrorCanvasRef.current : null
+    const mirror = poolRef.current.length ? mirrorCanvasRef.current : null
     if (mirror && mirror.width && mirror.height) {
       canvas.width = mirror.width
       canvas.height = mirror.height
@@ -802,19 +796,6 @@ export default function App() {
           <p>this strip in motion</p>
           <div className="motion-clips">{moments.map((moment, index) => moment.clip && <div key={moment.id} className="motion-clip"><video src={moment.clip.url} playsInline preload="metadata" muted /><a href={moment.clip.url} download={`sweet-memories-clip-${index + 1}.${moment.clip.extension}`} aria-label={`Download video for photo ${index + 1}`}>↓ clip {index + 1}</a></div>)}</div>
         </div>}
-      </div>
-    </div>}
-    {recordedVideo && <div className="preview-backdrop" onClick={closeRecordedVideo}>
-      <div className="preview-dialog result-dialog" role="dialog" aria-modal="true" aria-label="Your recorded video clip" onClick={event => event.stopPropagation()}>
-        <button className="close-preview" onClick={closeRecordedVideo} aria-label="Close video result" type="button">&times;</button>
-        <p>your clip is ready!</p>
-        <video className="result-video" src={recordedVideo.url} controls playsInline preload="metadata" />
-        <div className="result-actions">
-          <a className="result-download" href={recordedVideo.url} download={`photobooth-clip.${recordedVideo.extension}`}>↓ download clip</a>
-          <button className="result-share" onClick={shareVideo} type="button">⤴ share / save video</button>
-          <button className="result-open" onClick={() => window.open(recordedVideo.url, '_blank', 'noopener')} type="button">open full video</button>
-        </div>
-        <small className="result-hint">On iPad / iPhone: tap <b>Share</b> → Save Video to Photos. Clips are silent, up to 15 seconds.</small>
       </div>
     </div>}
     {videoStrip && <div className="preview-backdrop" onClick={closeVideoStrip}>
