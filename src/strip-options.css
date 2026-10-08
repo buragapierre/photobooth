@@ -1,5 +1,5 @@
 .strip-head { border-top: 1px dashed #e9b7a5; padding-top: 16px; }
-.strip-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin: 12px 0 16px; }
+.strip-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin: 12px 0 16px; }
 .strip-options button { min-width: 0; border: 1.5px solid #e5b29d; border-radius: 9px; background: #fffdf6; padding: 6px; color: #8e6962; font: 700 10px Nunito, sans-serif; cursor: pointer; }
 .strip-options button.selected { border-color: #dc6879; background: #ffe3d7; box-shadow: 2px 3px 0 #e39a91; color: #b0445b; }
 .strip-options img { display: block; width: 39px; height: 74px; margin: 0 auto 4px; object-fit: cover; object-position: top; border-radius: 3px; }

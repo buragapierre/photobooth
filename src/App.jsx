@@ -3,6 +3,7 @@ import stripOne from '../assets/strip-1.png'
 import stripTwo from '../assets/strip-2.png'
 import stripThree from '../assets/strip-3.png'
 import stripFour from '../assets/strip-4.png'
+import stripFive from '../assets/strip-5.png'
 
 const filters = [
   { name: 'Original', value: 'none', icon: '☁' },
@@ -20,6 +21,7 @@ const strips = [
   { name: 'Strip 2', src: stripTwo, blackWindows: true, slots: [{ x: 39, y: 112, width: 629, height: 459 }, { x: 39, y: 624, width: 629, height: 459 }, { x: 39, y: 1136, width: 629, height: 459 }] },
   { name: 'Strip 3', src: stripThree, blackWindows: true, slots: [{ x: 55, y: 219, width: 597, height: 406 }, { x: 63, y: 685, width: 597, height: 406 }, { x: 63, y: 1151, width: 597, height: 406 }] },
   { name: 'Strip 4', src: stripFour, blackWindows: true, slots: [{ x: 77, y: 163, width: 543, height: 466 }, { x: 82, y: 764, width: 543, height: 466 }, { x: 77, y: 1331, width: 543, height: 466 }] },
+  { name: 'Strip 5', src: stripFive, blackWindows: true, slots: [{ x: 32, y: 98, width: 642, height: 481 }, { x: 32, y: 616, width: 642, height: 475 }, { x: 32, y: 1128, width: 642, height: 475 }] },
 ]
 
 export default function App() {
@@ -27,6 +29,7 @@ export default function App() {
   const streamRef = useRef(null)
   const cameraRequestRef = useRef(0)
   const fileRef = useRef(null)
+  const stripRailRef = useRef(null)
   // Staggered recorder pool on one shared mirrored tap: every shutter grabs
   // the oldest recorder, so each photo gets up to 15s of lookback even when
   // captures come back-to-back.
@@ -756,7 +759,11 @@ export default function App() {
         <div className="panel-head photos-head"><span>02</span><h2>your snapshots</h2><b>{photos.length}/3</b></div>
         <div className="shots">{[0,1,2].map(i => moments[i]?.photo ? <button key={moments[i].id} className="shot-tile" onClick={() => setActiveMomentId(moments[i].id)} aria-label={`Open photo ${i+1} with its video`} aria-haspopup="dialog" type="button"><img src={moments[i].photo.src} alt={`Snapshot ${i+1}`} />{moments[i].clip && <span className="shot-badge" aria-hidden="true">▶</span>}</button> : <div key={i} className="empty">{doodles[i]}</div>)}</div>
         <div className="panel-head strip-head"><span>03</span><h2>pick a strip</h2></div>
-        <div className="strip-options">{strips.map(strip => <button key={strip.name} className={selectedStrip.name === strip.name ? 'selected' : ''} onClick={() => setSelectedStrip(strip)} aria-pressed={selectedStrip.name === strip.name} type="button"><img src={strip.src} alt=""/><span>{strip.name}</span></button>)}</div>
+        <div className="strip-rail">
+          <button className="rail-arrow" onClick={() => stripRailRef.current?.scrollBy({ left: -260, behavior: 'smooth' })} aria-label="Scroll strips left" type="button">‹</button>
+          <div className="strip-options" ref={stripRailRef}>{strips.map(strip => <button key={strip.name} className={selectedStrip.name === strip.name ? 'selected' : ''} onClick={() => setSelectedStrip(strip)} aria-pressed={selectedStrip.name === strip.name} type="button"><img src={strip.src} alt=""/><span>{strip.name}</span></button>)}</div>
+          <button className="rail-arrow" onClick={() => stripRailRef.current?.scrollBy({ left: 260, behavior: 'smooth' })} aria-label="Scroll strips right" type="button">›</button>
+        </div>
         <div className="strip-preview-wrap">
           <p>live strip preview</p>
           <button className="strip-preview" onClick={() => setPreviewExpanded(true)} aria-label="Open larger strip preview" aria-haspopup="dialog" type="button" style={{ backgroundImage: `url(${selectedStrip.src})` }}>

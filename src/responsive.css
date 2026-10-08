@@ -675,6 +675,60 @@ main {
   }
 }
 
+/* ---------- Swipeable strip picker (keeps the panel compact) ---------- */
+.strip-rail {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin: 12px 0 16px;
+}
+
+.strip-rail .strip-options {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+  margin: 0;
+  overflow-x: auto;
+  padding: 4px 2px 10px;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.strip-rail .strip-options::-webkit-scrollbar {
+  display: none;
+}
+
+.strip-rail .strip-options button {
+  flex: 0 0 104px;
+  scroll-snap-align: start;
+}
+
+.rail-arrow {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 34px;
+  height: 64px;
+  border: 1.5px solid #e5b29d;
+  border-radius: 10px;
+  background: #fffdf6;
+  color: #b0445b;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rail-arrow:active {
+  background: #ffe3d7;
+}
+
+@media (max-width: 640px) {
+  .rail-arrow {
+    display: none;
+  }
+}
+
 @media (max-width: 640px) {
   .clips {
     gap: 7px;
